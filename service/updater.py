@@ -10,7 +10,7 @@ from data.raw import (
     get_active_events,
     get_start_at,
     get_end_at,
-    _load_local_metadata,
+    get_latest_cutoff_time,
     download_cutoffs
 )
 from data.constants import tierListOfServer, step_length
@@ -85,8 +85,12 @@ class DataUpdater:
 
                 # 计算当前时间对应的步数（若活动已结束，则取 T）
                 if now_ms < end_at:
-                    current_step = max(0, (now_ms - start_at) // step_length)
-                    current_t0 = int(min(current_step, T))
+                    latest_time = get_latest_cutoff_time(event_id, server, tier_val)
+                    if latest_time is not None:
+                        current_step = max(0, (latest_time - start_at) // step_length)
+                        current_t0 = int(min(current_step, T))
+                    else:
+                        current_t0 = self.t_min   # 无数据时不预先填充任何历史切点
                 else:
                     current_t0 = T
 
@@ -138,8 +142,15 @@ class DataUpdater:
             # 活动未开始或已结束，不处理
             return None
         try:
-            elapsed = now_ms - step_length // 2 - start_at
+            latest_time = get_latest_cutoff_time(event_id, server, tier)
+            if latest_time is None:
+                return None
+            elapsed = latest_time - start_at
             current_t0 = max(0, elapsed // step_length)
+            # 确保不超过理论最大步数
+            end_at = get_end_at(server, event_id)
+            T = max(0, (end_at - start_at) // step_length)
+            current_t0 = min(current_t0, T)
 
             if current_t0 < self.t_min:
                 return None
@@ -209,7 +220,7 @@ class DataUpdater:
     # -----------------------------------------------------------------
     def initialize_cache(self):
         """仅对预测不完整的活动及档位生成序列，填充缓存。"""
-        _cache_metadata(self.raw_dir)
+        _cache_metadata(self.raw_dir, True)
         server = 3
         now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
         valid_ids = get_valid_event_ids(
@@ -221,9 +232,6 @@ class DataUpdater:
         if not valid_ids:
             logger.info("No valid events to process at startup.")
             return
-
-        # 加载活动元数据
-        ev_data, _ = _load_local_metadata(self.raw_dir)
 
         # 计算每个活动的理论总步数
         event_length = {}
@@ -300,6 +308,7 @@ class DataUpdater:
     def _run_periodic_update(self):
         while not self._stop_event.is_set():
             try:
+                _cache_metadata(self.raw_dir, True)  # 定期刷新元数据缓存
                 self.periodic_update()
             except Exception as e:
                 logger.error(f"Periodic task failed: {e}", exc_info=True)

@@ -25,12 +25,12 @@ def get_character_data(raw_dir: str = config.raw_dir):
     _ensure_metadata_loaded(raw_dir)
     return _char_data_cache
 
-def _cache_metadata(raw_dir: str):
+def _cache_metadata(raw_dir: str, force: bool = False):
     """下载活动与角色元数据，缓存到 raw_dir 下（如果已有则跳过）"""
     events_path = os.path.join(raw_dir, "events_all.json")
     chars_path = os.path.join(raw_dir, "characters_main.json")
 
-    if not os.path.exists(events_path):
+    if force or not os.path.exists(events_path):
         print("缓存活动元数据...")
         event_data = get_json_with_retry(f"{Bestdoriurl}/api/events/all.6.json")
         if event_data:
@@ -38,7 +38,7 @@ def _cache_metadata(raw_dir: str):
             print(f"活动元数据已缓存到 {events_path}")
         else:
             raise RuntimeError("无法获取活动元数据，且无本地缓存")
-    if not os.path.exists(chars_path):
+    if force or not os.path.exists(chars_path):
         print("缓存角色元数据...")
         char_data = get_json_with_retry(f"{Bestdoriurl}/api/characters/main.3.json")
         if char_data:
@@ -171,6 +171,19 @@ def generate_sequences(
 
     return sequences
 
+def get_latest_cutoff_time(event_id: int, server: int, tier: int, raw_dir: str = None) -> Optional[int]:
+    """返回 cutoff 文件中最近的时间戳（毫秒），若文件不存在或无数据返回 None"""
+    if raw_dir is None:
+        raw_dir = config.raw_dir
+    file_path = os.path.join(raw_dir, str(server), str(event_id), f"{tier}.json")
+    if not os.path.exists(file_path):
+        return None
+    with open(file_path, 'r') as f:
+        data = json.load(f)
+    if not data:
+        return None
+    latest = max(item["time"] for item in data)
+    return latest
 
 def _create_sequence_from_raw(
     raw_data: list,
