@@ -20,13 +20,11 @@ async def startup():
     os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
 
     model_path = os.environ.get("MODEL_PATH", "saved_models/moe.keras")
-    raw_dir = os.environ.get("RAW_DIR", "datasets/raw")
 
     logger.info("Loading model...")
     predictor = Predictor(model_path)
 
     updater = DataUpdater(
-        raw_dir=raw_dir,
         min_event_id=306,
         update_interval=1800,  # 30分钟更新一次
         t_min=t_min,   # 可以从 Config 读取，但为简洁直接给出

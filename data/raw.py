@@ -13,42 +13,47 @@ import json
 _event_data_cache = None
 _char_data_cache = None
 config = Config()
-def _ensure_metadata_loaded(raw_dir: str):
+
+def _ensure_metadata_loaded():
     global _event_data_cache, _char_data_cache
     if _event_data_cache is None or _char_data_cache is None:
-        _event_data_cache, _char_data_cache = _load_local_metadata(raw_dir)
-def get_event_data(raw_dir: str = config.raw_dir):
-    _ensure_metadata_loaded(raw_dir)
+        _event_data_cache, _char_data_cache = _load_local_metadata()
+
+def get_event_data():
+    _ensure_metadata_loaded()
     return _event_data_cache
 
-def get_character_data(raw_dir: str = config.raw_dir):
-    _ensure_metadata_loaded(raw_dir)
+def get_character_data():
+    _ensure_metadata_loaded()
     return _char_data_cache
 
-def _cache_metadata(raw_dir: str, force: bool = False):
-    """下载活动与角色元数据，缓存到 raw_dir 下（如果已有则跳过）"""
+def _cache_metadata(force: bool = False):
+    """下载活动与角色元数据，缓存到统一 raw_dir 下（如果已有则跳过）"""
+    global _event_data_cache, _char_data_cache
+    raw_dir = config.raw_dir
     events_path = os.path.join(raw_dir, "events_all.json")
     chars_path = os.path.join(raw_dir, "characters_main.json")
 
     if force or not os.path.exists(events_path):
         print("缓存活动元数据...")
-        event_data = get_json_with_retry(f"{Bestdoriurl}/api/events/all.6.json")
-        if event_data:
-            save_json(event_data, events_path)
+        _event_data_cache = get_json_with_retry(f"{Bestdoriurl}/api/events/all.6.json")
+        if _event_data_cache:
+            save_json(_event_data_cache, events_path)
             print(f"活动元数据已缓存到 {events_path}")
         else:
             raise RuntimeError("无法获取活动元数据，且无本地缓存")
     if force or not os.path.exists(chars_path):
         print("缓存角色元数据...")
-        char_data = get_json_with_retry(f"{Bestdoriurl}/api/characters/main.3.json")
-        if char_data:
-            save_json(char_data, chars_path)
+        _char_data_cache = get_json_with_retry(f"{Bestdoriurl}/api/characters/main.3.json")
+        if _char_data_cache:
+            save_json(_char_data_cache, chars_path)
             print(f"角色元数据已缓存到 {chars_path}")
         else:
             raise RuntimeError("无法获取角色元数据，且无本地缓存")
 
-def _load_local_metadata(raw_dir: str):
-    """从 raw_dir 加载活动与角色数据（JSON 格式）"""
+def _load_local_metadata():
+    """从统一 raw_dir 加载活动与角色数据（JSON 格式）"""
+    raw_dir = config.raw_dir
     events_path = os.path.join(raw_dir, "events_all.json")
     chars_path = os.path.join(raw_dir, "characters_main.json")
     if not os.path.exists(events_path) or not os.path.exists(chars_path):
@@ -62,21 +67,21 @@ def _load_local_metadata(raw_dir: str):
     return event_data, char_data
 
 def generate_sequences(
-    raw_dir: str = "raw",
     split_threshold: int = 280,
     event_ids: Optional[List[int]] = None,
     server_list: Optional[List[int]] = None,
     tier_list: Optional[List[int]] = None,
 ) -> List[Dict]:
     """
-    从 raw_dir 生成序列。
+    从统一 raw_dir 生成序列。
     
     - 若 event_ids / server_list / tier_list 未提供，则自动扫描 raw_dir 下所有可用数据。
     - 若提供，则只生成匹配指定活动ID、服务器、档位的序列。
-    - 目录结构：raw_dir/{server}/{eventId}/{tier}.json
+    - 目录结构：config.raw_dir/{server}/{eventId}/{tier}.json
     """
     # 加载本地元数据
-    event_data, character_data = _load_local_metadata(raw_dir)
+    raw_dir = config.raw_dir
+    event_data, character_data = _load_local_metadata()
 
     if not os.path.isdir(raw_dir):
         raise FileNotFoundError(f"raw_dir 不存在: {raw_dir}")
@@ -171,10 +176,9 @@ def generate_sequences(
 
     return sequences
 
-def get_latest_cutoff_time(event_id: int, server: int, tier: int, raw_dir: str = None) -> Optional[int]:
+def get_latest_cutoff_time(event_id: int, server: int, tier: int) -> Optional[int]:
     """返回 cutoff 文件中最近的时间戳（毫秒），若文件不存在或无数据返回 None"""
-    if raw_dir is None:
-        raw_dir = config.raw_dir
+    raw_dir = config.raw_dir
     file_path = os.path.join(raw_dir, str(server), str(event_id), f"{tier}.json")
     if not os.path.exists(file_path):
         return None
@@ -250,18 +254,18 @@ def download_cutoffs(
     event_list: Optional[List[int]] = None,
     server_list: List[int] = [3],
     tier_list: Optional[List[int]] = None,
-    out_dir: str = config.raw_dir,
     force: bool = False,
 ):
     """
-    下载指定活动、服务器、档位的 cutoff 数据，保存到 raw/ 目录。
+    下载指定活动、服务器、档位的 cutoff 数据，保存到统一 raw_dir 目录。
     如果文件已存在则跳过（断点续传）。
     """
+    out_dir = config.raw_dir
     if tier_list is None:
         tier_list = tierListOfServer[3]  # 默认使用所有档位
 
-    _cache_metadata(out_dir)
-    event_data, _ = _load_local_metadata(out_dir)
+    _cache_metadata()
+    event_data, _ = _load_local_metadata()
     for server in server_list:
         for eventId in event_list:
             if str(eventId) not in event_data or event_data[str(eventId)]['startAt'][server] is None:
@@ -369,22 +373,21 @@ def save_sequences_to_hdf5(sequences: List[Dict], filename: str):
             g.attrs["split"] = seq.get("split", "train")
 
 
-def get_max_event_id(raw_dir: str) -> int:
+def get_max_event_id() -> int:
     """返回 events_all.json 中所有活动的最大 ID。"""
-    event_data, _ = _load_local_metadata(raw_dir)
+    event_data, _ = _load_local_metadata()
     if not event_data:
         raise ValueError("events_all.json 中无活动数据")
     return max(int(k) for k in event_data.keys())
 
-def get_active_events(server: int, raw_dir: str = config.raw_dir,
-                      current_time_ms: Optional[int] = None) -> List[int]:
+def get_active_events(server: int, current_time_ms: Optional[int] = None) -> List[int]:
     """
     返回当前时间（毫秒）下正在进行的活动 ID 列表。
     如果未提供 current_time_ms，则使用当前 UTC 时间。
     """
     if current_time_ms is None:
         current_time_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
-    event_data, _ = _load_local_metadata(raw_dir)
+    event_data, _ = _load_local_metadata()
     active = []
     for ev_id_str, ev in event_data.items():
         ev_id = int(ev_id_str)
@@ -396,8 +399,7 @@ def get_active_events(server: int, raw_dir: str = config.raw_dir,
             active.append(ev_id)
     return sorted(active)
 
-def get_valid_event_ids(server: int, raw_dir: str = config.raw_dir,
-                        min_event_id: int = 226,
+def get_valid_event_ids(server: int, min_event_id: int = 226,
                         current_time_ms: Optional[int] = None) -> List[int]:
     """
     返回所有应处理的活动ID：
@@ -406,7 +408,7 @@ def get_valid_event_ids(server: int, raw_dir: str = config.raw_dir,
     """
     if current_time_ms is None:
         current_time_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
-    event_data, _ = _load_local_metadata(raw_dir)
+    event_data, _ = _load_local_metadata()
     valid = []
     for ev_id_str, ev in event_data.items():
         ev_id = int(ev_id_str)

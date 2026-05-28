@@ -23,7 +23,6 @@ logger = logging.getLogger(__name__)
 class DataUpdater:
     def __init__(
         self,
-        raw_dir: str,
         server_list: List[int] = None,
         tier_list: List[int] = None,
         update_interval: int = 3600,
@@ -31,7 +30,6 @@ class DataUpdater:
         batch_size: int = 256,
         min_event_id: int = 226,
     ):
-        self.raw_dir = raw_dir
         self.server_list = server_list or [3]
         self.tier_list = tier_list or tierListOfServer.get(3, [])
         self.update_interval = update_interval
@@ -57,7 +55,6 @@ class DataUpdater:
             event_ids=event_ids,
             server_list=self.server_list,
             tier_list=self.tier_list,
-            raw_dir=self.raw_dir,
             split_threshold=10000,
         )
 
@@ -136,15 +133,34 @@ class DataUpdater:
             logger.error("Predictor not set")
             return None
         now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
-        start_at = get_start_at(server, event_id)
-        end_at = get_end_at(server, event_id)
-        if not (start_at <= now_ms < end_at):
-            # 活动未开始或已结束，不处理
-            return None
         try:
-            latest_time = get_latest_cutoff_time(event_id, server, tier)
-            if latest_time is None:
+            start_at = get_start_at(server, event_id)
+            end_at = get_end_at(server, event_id)
+            if start_at is None or end_at is None:
+                logger.warning(
+                    "Missing event timing for event %s, server %s; skip prediction.",
+                    event_id, server
+                )
                 return None
+            if not (start_at <= now_ms < end_at):
+                # 活动未开始或已结束，不处理
+                return None
+
+            latest_time = get_latest_cutoff_time(event_id, server, tier)
+            if latest_time is None or latest_time < now_ms - step_length:
+                logger.info(
+                    "Cutoff missing or stale for event %s, server %s, tier %s; downloading.",
+                    event_id, server, tier
+                )
+                download_cutoffs(
+                    event_list=[event_id],
+                    server_list=[server],
+                    tier_list=[tier],
+                    force=True,
+                )
+                latest_time = get_latest_cutoff_time(event_id, server, tier)
+                if latest_time is None:
+                    return None
             elapsed = latest_time - start_at
             current_t0 = max(0, elapsed // step_length)
             # 确保不超过理论最大步数
@@ -162,7 +178,6 @@ class DataUpdater:
                 return self.cache.get_latest_slice(event_id, server, tier)
             # 未传入 seq 时，按需生成序列
             if seq is None:
-                download_cutoffs(event_list=[event_id], server_list=[server], tier_list=[tier], force=True)
                 seq = self._generate_single_sequence(event_id, server, tier)
                 if seq is None:
                     return None
@@ -207,7 +222,6 @@ class DataUpdater:
                 event_ids=[event_id],
                 server_list=[server],
                 tier_list=[tier],
-                raw_dir=self.raw_dir,
                 split_threshold=10000,
             )
             if seqs:
@@ -220,12 +234,11 @@ class DataUpdater:
     # -----------------------------------------------------------------
     def initialize_cache(self):
         """仅对预测不完整的活动及档位生成序列，填充缓存。"""
-        _cache_metadata(self.raw_dir, True)
+        _cache_metadata(True)
         server = 3
         now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
         valid_ids = get_valid_event_ids(
             server=server,
-            raw_dir=self.raw_dir,
             min_event_id=self.min_event_id,
             current_time_ms=now_ms,
         )
@@ -265,13 +278,12 @@ class DataUpdater:
             event_ids=sorted(needed_events),
             server_list=self.server_list,
             tier_list=self.tier_list,
-            raw_dir=self.raw_dir,
             split_threshold=10000,
         )
 
         # 批量填充缺失的历史切点（包含 time 字段）
         self._fill_history_cache(seqs)
-        active_ids = set(get_active_events(3, self.raw_dir, current_time_ms=now_ms))
+        active_ids = set(get_active_events(3, current_time_ms=now_ms))
         # 生成初始的最新切片（对进行中的活动）
         for seq in seqs:
             event_id = int(seq["context_cat"][4])
@@ -290,7 +302,7 @@ class DataUpdater:
         if self.predictor is None:
             return
         now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
-        active_events = get_active_events(3, self.raw_dir, current_time_ms=now_ms)
+        active_events = get_active_events(3, current_time_ms=now_ms)
         if not active_events:
             logger.debug("No active events for periodic update.")
             return
@@ -308,7 +320,7 @@ class DataUpdater:
     def _run_periodic_update(self):
         while not self._stop_event.is_set():
             try:
-                _cache_metadata(self.raw_dir, True)  # 定期刷新元数据缓存
+                _cache_metadata(True)  # 定期刷新元数据缓存
                 self.periodic_update()
             except Exception as e:
                 logger.error(f"Periodic task failed: {e}", exc_info=True)
