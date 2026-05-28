@@ -22,12 +22,15 @@ def load_sequences_from_hdf5(filename: str, split: Optional[str] = None) -> List
             context_cat = g["context_cat"][:].astype(np.int32)
             context_num = np.float32(g["context_num"][()])
 
-            sequences.append({
+            seq = {
                 "y": y,
                 "exo": exo,
                 "context_cat": context_cat,
                 "context_num": context_num,
-            })
+            }
+            if "tier" in g.attrs:
+                seq["tier"] = int(g.attrs["tier"])
+            sequences.append(seq)
     return sequences
 
 def compute_y_normalization_params(sequences: List[Dict[str, Any]]):

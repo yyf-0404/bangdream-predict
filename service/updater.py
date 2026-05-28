@@ -13,7 +13,8 @@ from data.raw import (
     get_latest_cutoff_time,
     download_cutoffs
 )
-from data.constants import tierListOfServer, step_length
+from data.constants import oldEventTierListOfServer, step_length, tier_list_for_event
+from data.constants import is_supported_tier
 from .cache import PredictionCache
 from .predictor import Predictor
 
@@ -31,7 +32,7 @@ class DataUpdater:
         min_event_id: int = 226,
     ):
         self.server_list = server_list or [3]
-        self.tier_list = tier_list or tierListOfServer.get(3, [])
+        self.tier_list = tier_list
         self.update_interval = update_interval
         self.t_min = t_min
         self.batch_size = batch_size
@@ -71,7 +72,8 @@ class DataUpdater:
                 event_id = int(seq["context_cat"][4])
                 server = int(seq["context_cat"][3])
                 tier_idx = int(seq["context_cat"][2])
-                tier_val = self._tier_index_to_value(tier_idx)
+                tier_val = seq.get("tier")
+                tier_val = int(tier_val) if tier_val is not None else self._tier_index_to_value(tier_idx)
 
                 T = len(seq["y"])
                 if T <= self.t_min:
@@ -144,6 +146,12 @@ class DataUpdater:
                 return None
             if not (start_at <= now_ms < end_at):
                 # 活动未开始或已结束，不处理
+                return None
+            if not is_supported_tier(server, event_id, tier):
+                logger.warning(
+                    "Unsupported tier %s for event %s, server %s; skip prediction.",
+                    tier, event_id, server
+                )
                 return None
 
             latest_time = get_latest_cutoff_time(event_id, server, tier)
@@ -261,7 +269,9 @@ class DataUpdater:
         needed_events = set()
         for ev_id, T in event_length.items():
             all_t0 = set(range(self.t_min, T))
-            for tier in self.tier_list:
+            for tier in self._tier_list_for_event(server, ev_id):
+                if not is_supported_tier(server, ev_id, tier):
+                    continue
                 cached_t0 = set(self.cache.get_t0_set(ev_id, server, tier))
                 if all_t0 - cached_t0:
                     needed_events.add(ev_id)
@@ -291,7 +301,8 @@ class DataUpdater:
                 continue
             server = int(seq["context_cat"][3])
             tier_idx = int(seq["context_cat"][2])
-            tier_val = self._tier_index_to_value(tier_idx)
+            tier_val = seq.get("tier")
+            tier_val = int(tier_val) if tier_val is not None else self._tier_index_to_value(tier_idx)
             self.ensure_latest_slice(event_id, server, tier_val, seq=seq)
 
         logger.info("Initial cache fill completed.")
@@ -308,9 +319,11 @@ class DataUpdater:
             return
         logger.info(f"Active events: {active_events}")
 
-        # 获取这些活动使用的所有档位组合（简化：使用全部档位列表）
+        # 按活动规则版本选择档位：旧活动无 1500，新活动包含 1500。
         for event_id in active_events:
-            for tier in self.tier_list:
+            for tier in self._tier_list_for_event(3, event_id):
+                if not is_supported_tier(3, event_id, tier):
+                    continue
                 # 调用公共方法即可，它会自动更新历史+latest
                 self.ensure_latest_slice(event_id, 3, tier)
 
@@ -337,8 +350,13 @@ class DataUpdater:
     # -----------------------------------------------------------------
     # 辅助
     # -----------------------------------------------------------------
+    def _tier_list_for_event(self, server: int, event_id: int):
+        if self.tier_list is not None:
+            return self.tier_list
+        return tier_list_for_event(server, event_id)
+
     def _tier_index_to_value(self, tier_idx: int) -> int:
-        tier_list = tierListOfServer.get(3, [])
+        tier_list = oldEventTierListOfServer.get(3, [])
         if 0 <= tier_idx < len(tier_list):
             return tier_list[tier_idx]
         return tier_idx

@@ -94,8 +94,6 @@ def generate_sequences(
         if server_list is None:
             server_list = [3]  # 默认服务器
         for server in server_list:
-            if tier_list is None:
-                tier_list = tierListOfServer[server]  # 默认使用指定服务器的所有档位
             for eventId in event_ids:
                 event = event_data.get(str(eventId))
                 if event is None:
@@ -106,8 +104,9 @@ def generate_sequences(
                 if not startAt or not endAt:
                     continue
 
-                for tier in tier_list:
-                    if tier not in tierListOfServer.get(server, []):
+                event_tiers = tier_list if tier_list is not None else tier_list_for_event(server, eventId)
+                for tier in event_tiers:
+                    if not is_supported_tier(server, eventId, tier):
                         continue
                     file_path = os.path.join(raw_dir, str(server), str(eventId), f"{tier}.json")
                     if not os.path.exists(file_path):
@@ -161,6 +160,8 @@ def generate_sequences(
                         tier = int(tier_str)
                     except ValueError:
                         print(f"非整数 tier 文件名，跳过: {file_name}")
+                        continue
+                    if not is_supported_tier(server, eventId, tier):
                         continue
 
                     file_path = os.path.join(event_path, file_name)
@@ -233,10 +234,7 @@ def _create_sequence_from_raw(
 
     event_type = eventTypeMap.get(event['eventType'], 0)
     band = get_band(event, character_data)
-    tier_idx = tierMap.get(tier)
-    if tier_idx is None:
-        print(f"警告: tier {tier} 不在 tierMap 中，跳过")
-        return None
+    tier_idx = model_tier_index(tier)
 
     # 分别保存分类特征和数值特征
     context_cat = np.array([event_type, band, tier_idx, server, eventId], dtype=np.int32)
@@ -247,6 +245,7 @@ def _create_sequence_from_raw(
         "exo": exo_arr,
         "context_cat": context_cat,
         "context_num": context_num,
+        "tier": int(tier),
         "split": split
     }
 
@@ -261,9 +260,6 @@ def download_cutoffs(
     如果文件已存在则跳过（断点续传）。
     """
     out_dir = config.raw_dir
-    if tier_list is None:
-        tier_list = tierListOfServer[3]  # 默认使用所有档位
-
     _cache_metadata()
     event_data, _ = _load_local_metadata()
     for server in server_list:
@@ -271,7 +267,10 @@ def download_cutoffs(
             if str(eventId) not in event_data or event_data[str(eventId)]['startAt'][server] is None:
                 print(f"活动 {eventId} 在服务器 {server} 上不存在，跳过。")
                 continue
-            for tier in tier_list:
+            event_tiers = tier_list if tier_list is not None else tier_list_for_event(server, eventId)
+            for tier in event_tiers:
+                if not is_supported_tier(server, eventId, tier):
+                    continue
                 save_path = os.path.join(out_dir, str(server), str(eventId), f"{tier}.json")
                 if not force and os.path.exists(save_path):
                     print(f"已存在，跳过: {save_path}")
@@ -370,6 +369,8 @@ def save_sequences_to_hdf5(sequences: List[Dict], filename: str):
             g.create_dataset("context_cat", data=seq["context_cat"])
             g.create_dataset("context_num", data=np.float32(seq["context_num"]))
             g.attrs["length"] = len(seq["y"])
+            if "tier" in seq:
+                g.attrs["tier"] = int(seq["tier"])
             g.attrs["split"] = seq.get("split", "train")
 
 

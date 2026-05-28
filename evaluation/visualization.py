@@ -183,7 +183,9 @@ def visualize_val_sequences_after_training(
         # 使用之前定义的映射
         event_str = inv_eventType.get(eventType, f"ev{eventType}")
         band_str = bandNames.get(band, f"b{band}")
-        tier_val = tierListOfServer[3][tier] if tier < len(tierListOfServer[3]) else f"?{tier}"
+        tier_val = seq.get("tier")
+        if tier_val is None:
+            tier_val = tierListOfServer[3][tier] if 0 <= tier < len(tierListOfServer[3]) else f"?{tier}"
         server_str = serverNames.get(server, "server?")
 
         title = f"val ctx(ev{eventId},{event_str},{band_str},t{tier_val},{server_str})"

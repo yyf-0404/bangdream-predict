@@ -150,6 +150,7 @@ python visualize.py --model_path saved_models/moe.keras
 - 当前主要面向 Bestdori CN 服务器，默认 server 为 `3`。
 - 时间步长固定为 30 分钟。
 - `t_min=48`，即活动开始后约 24 小时才会进行预测。
+- CN 新活动规则中的 1500 档会被服务拉取；现有模型预测该档时按 missing tier embedding 0 处理，以覆盖新旧两种活动规则。
 - 在线服务后台每 30 分钟刷新一次活跃活动 cutoff，并按档位更新预测缓存。
 - Bestdori 数据版权和使用条件不属于本仓库许可证覆盖范围。
 
