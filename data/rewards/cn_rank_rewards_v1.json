@@ -1,0 +1,41 @@
+{
+  "version": "cn-rank-rewards-v1",
+  "server": 3,
+  "first_supported_event": 226,
+  "min_rank": 1,
+  "max_rank": 100000,
+  "sources": {
+    "stars_change": "https://www.bilibili.com/opus/1112698916851155001",
+    "cosmetics_change": "https://weibo.com/ttarticle/p/show?id=2309405300751881863637",
+    "user_confirmed_2026_09_07": [
+      "Ranks 20001 through 100000 receive 200 stars in all covered stages.",
+      "Top-1000 voice sticker rewards already apply from event 226."
+    ]
+  },
+  "stages": [
+    {
+      "name": "before_2025_09_26",
+      "effective_from": null,
+      "stars": [[2000, 500], [20000, 250], [100000, 200]],
+      "voice_top": 1000,
+      "dynamic_top": null,
+      "flash_top": null
+    },
+    {
+      "name": "from_2025_09_26",
+      "effective_from": "2025-09-26",
+      "stars": [[2000, 1000], [5000, 750], [10000, 500], [20000, 250], [100000, 200]],
+      "voice_top": 1000,
+      "dynamic_top": null,
+      "flash_top": null
+    },
+    {
+      "name": "from_2026_05_26",
+      "effective_from": "2026-05-26",
+      "stars": [[2000, 1000], [5000, 750], [10000, 500], [20000, 250], [100000, 200]],
+      "voice_top": 1500,
+      "dynamic_top": 500,
+      "flash_top": 1000
+    }
+  ]
+}

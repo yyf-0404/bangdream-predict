@@ -1,0 +1,82 @@
+[
+  {
+    "event_id": 325,
+    "tier": 500,
+    "final": 12647536
+  },
+  {
+    "event_id": 325,
+    "tier": 1000,
+    "final": 9543389
+  },
+  {
+    "event_id": 325,
+    "tier": 1500,
+    "final": 8516669
+  },
+  {
+    "event_id": 325,
+    "tier": 2000,
+    "final": 7002130
+  },
+  {
+    "event_id": 326,
+    "tier": 500,
+    "final": 3367026
+  },
+  {
+    "event_id": 326,
+    "tier": 1000,
+    "final": 2012055
+  },
+  {
+    "event_id": 326,
+    "tier": 1500,
+    "final": 1772422
+  },
+  {
+    "event_id": 326,
+    "tier": 2000,
+    "final": 1381690
+  },
+  {
+    "event_id": 327,
+    "tier": 500,
+    "final": 5623095
+  },
+  {
+    "event_id": 327,
+    "tier": 1000,
+    "final": 3993320
+  },
+  {
+    "event_id": 327,
+    "tier": 1500,
+    "final": 3631129
+  },
+  {
+    "event_id": 327,
+    "tier": 2000,
+    "final": 2917782
+  },
+  {
+    "event_id": 328,
+    "tier": 500,
+    "final": 6541894
+  },
+  {
+    "event_id": 328,
+    "tier": 1000,
+    "final": 3349819
+  },
+  {
+    "event_id": 328,
+    "tier": 1500,
+    "final": 3217589
+  },
+  {
+    "event_id": 328,
+    "tier": 2000,
+    "final": 2173258
+  }
+]

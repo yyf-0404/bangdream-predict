@@ -1,0 +1,215 @@
+{
+  "version": "cn-rule-type-holdout-through-328-v3",
+  "strategy": "fixed-rule-type-holdout",
+  "server": 3,
+  "selection_seed": 1,
+  "selection_method": "Freeze the 79 training and 23 development assignments through 327. Append completed CN event 328 (new rule, live_try) to development validation.",
+  "temporal_holdout": false,
+  "events_by_type": {
+    "challenge": {
+      "old": [
+        232,
+        234,
+        242,
+        245,
+        257,
+        266,
+        270,
+        281,
+        284,
+        289,
+        293,
+        299,
+        306
+      ],
+      "new": [
+        311,
+        317,
+        325
+      ]
+    },
+    "festival": {
+      "old": [
+        237,
+        243,
+        256,
+        261,
+        288
+      ],
+      "new": [
+        310,
+        324
+      ]
+    },
+    "live_try": {
+      "old": [
+        228,
+        238,
+        240,
+        246,
+        250,
+        253,
+        258,
+        262,
+        265,
+        268,
+        274,
+        277,
+        280,
+        282,
+        285,
+        292,
+        295,
+        298,
+        301,
+        304,
+        309,
+        313
+      ],
+      "new": [
+        316,
+        319,
+        322,
+        328
+      ]
+    },
+    "medley": {
+      "old": [
+        226,
+        229,
+        233,
+        239,
+        244,
+        249,
+        254,
+        260,
+        264,
+        272,
+        287,
+        294,
+        305
+      ],
+      "new": [
+        323
+      ]
+    },
+    "mission_live": {
+      "old": [
+        227,
+        231,
+        235,
+        241,
+        248,
+        252,
+        255,
+        259,
+        267,
+        271,
+        273,
+        276,
+        279,
+        283,
+        286,
+        291,
+        297,
+        300,
+        303,
+        307,
+        312
+      ],
+      "new": [
+        315,
+        318,
+        321,
+        327
+      ]
+    },
+    "versus": {
+      "old": [
+        230,
+        236,
+        247,
+        251,
+        263,
+        269,
+        275,
+        278,
+        290,
+        296,
+        302,
+        308
+      ],
+      "new": [
+        314,
+        320,
+        326
+      ]
+    }
+  },
+  "validation_by_type": {
+    "challenge": {
+      "old": [
+        234,
+        242,
+        289
+      ],
+      "new": [
+        325
+      ]
+    },
+    "festival": {
+      "old": [
+        256
+      ],
+      "new": [
+        324
+      ]
+    },
+    "live_try": {
+      "old": [
+        246,
+        285,
+        292,
+        309
+      ],
+      "new": [
+        322,
+        328
+      ]
+    },
+    "medley": {
+      "old": [
+        229,
+        239,
+        254
+      ],
+      "new": [
+        323
+      ]
+    },
+    "mission_live": {
+      "old": [
+        227,
+        279,
+        283,
+        291
+      ],
+      "new": [
+        327
+      ]
+    },
+    "versus": {
+      "old": [
+        230,
+        296
+      ],
+      "new": [
+        326
+      ]
+    }
+  },
+  "parent_version": "cn-rule-type-holdout-through-327-v2",
+  "coverage_updated_at": "2026-11-18",
+  "last_completed_event": 328,
+  "extension_policy": "Keep the seed-1 old-rule validation and the six new-rule validation events fixed at the through-327 snapshot. Add 328 to the same validation split, retaining 322 in live_try."
+}

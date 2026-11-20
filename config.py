@@ -2,12 +2,19 @@
 from dataclasses import dataclass
 from typing import Optional, List
 
+CURVE_DATA = "datasets/joint_v2_through_328.h5"
+CURVE_SPLIT = "data/splits/cn_type_balanced_through_328_v3.json"
+
+
 @dataclass
 class Config:
     # ---------- 数据 ----------
     pre_h5: str = "datasets/preprocessed.h5"       # 预处理后的 HDF5
     raw_h5: str = "datasets/data.hdf5"             # 原始 HDF5（预处理输入）
     raw_dir: str = "datasets/raw"    # 原始缓存数据目录
+    split_manifest: str = CURVE_SPLIT
+    balance_rule_weights: bool = True
+    tier_1500_weight: float = 1.0
     split_threshold: int = 290      # 活动ID ≤ 此值归训练集，其他归验证集
 
     # 训练用

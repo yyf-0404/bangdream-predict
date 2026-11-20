@@ -1,9 +1,14 @@
 # data/dataset.py
+from __future__ import annotations
+
 import h5py
 import numpy as np
-import tensorflow as tf
+import warnings
 from typing import Dict, Any, List, Tuple
 from dataclasses import dataclass
+from .sequences import get_cutoff_sequence_version
+from .sample_weights import SAMPLE_WEIGHT_VERSION
+from .event_split import read_event_split_report
 
 @dataclass
 class BucketData:
@@ -19,6 +24,8 @@ def load_preprocessed(pre_h5: str, split: str) -> Tuple[Dict[str, Any], List[Buc
     _BUCKET_RE = re.compile(r"^bucket_\d+$")
 
     with h5py.File(pre_h5, "r") as f:
+        get_cutoff_sequence_version(f)
+        split_report = read_event_split_report(f)
         meta = f["meta"].attrs
         x_dim = int(meta["x_dim"])
         context_cat_len = int(meta["context_cat_len"])
@@ -29,6 +36,18 @@ def load_preprocessed(pre_h5: str, split: str) -> Tuple[Dict[str, Any], List[Buc
         ctx_max = float(f["norm/ctx_max"][0])
 
         split_g = f[split]
+        if split_g.attrs.get("sample_weight_version") != SAMPLE_WEIGHT_VERSION:
+            warnings.warn(
+                "预处理数据尚未采用新版样本权重，请重新运行 preprocess.py；"
+                "仅修改配置不会更新 HDF5 中已有的权重。",
+                RuntimeWarning, stacklevel=2,
+            )
+        elif (split == "train" and split_g.attrs.get("rule_balance_requested", False)
+              and not split_g.attrs.get("rule_balance_applied", False)):
+            warnings.warn(
+                "此训练集未达到新旧规则 1:1，请检查活动划分及 rule_sample_counts。",
+                RuntimeWarning, stacklevel=2,
+            )
         bucket_keys = []
         for k in split_g.keys():
             if not _BUCKET_RE.match(k):
@@ -69,13 +88,18 @@ def load_preprocessed(pre_h5: str, split: str) -> Tuple[Dict[str, Any], List[Buc
         y_std=y_std,
         ctx_min=ctx_min,
         ctx_max=ctx_max,
+        event_split_report=split_report,
     )
     return norm, buckets
 
 def steps_from_buckets(buckets: List[BucketData], batch_size: int) -> int:
-    return int(sum((b.n // batch_size) for b in buckets))
+    if batch_size <= 0:
+        raise ValueError("batch_size must be positive")
+    return int(sum((b.n + batch_size - 1) // batch_size for b in buckets))
 
 def make_bucket_dataset(bucket: BucketData, batch_size: int, training: bool, seed: int) -> tf.data.Dataset:
+    import tensorflow as tf
+
     a = bucket.arrays
     x = {
         "x_hist": a["x_hist"].astype(np.float32),
@@ -96,7 +120,7 @@ def make_bucket_dataset(bucket: BucketData, batch_size: int, training: bool, see
     ds = tf.data.Dataset.from_tensor_slices((x, y, w))
     if training:
         ds = ds.shuffle(buffer_size=min(bucket.n, 8192), seed=seed, reshuffle_each_iteration=True)
-    ds = ds.batch(batch_size, drop_remainder=True)   # 保持静态 batch shape
+    ds = ds.batch(batch_size, drop_remainder=False)  # 包含尾批，保留全部训练/验证样本
     return ds
 
 def make_batch_dataset_from_buckets(
@@ -106,24 +130,28 @@ def make_batch_dataset_from_buckets(
     seed: int,
     repeat: bool,
 ) -> Tuple[tf.data.Dataset, int]:
+    import tensorflow as tf
 
     steps = steps_from_buckets(buckets, batch_size)
     if steps <= 0:
-        raise ValueError("No full batches available. Reduce batch_size or add more data.")
+        raise ValueError("No samples available in the selected split.")
 
     per_bucket_ds = []
     weights = []
     for i, b in enumerate(buckets):
-        if b.n < batch_size:
+        if b.n <= 0:
             continue
         per_bucket_ds.append(make_bucket_dataset(b, batch_size, training=training, seed=seed + i * 1000))
         weights.append(float(b.n))
 
     if not per_bucket_ds:
-        raise ValueError("No buckets have enough samples for one batch.")
+        raise ValueError("No nonempty buckets available.")
 
     if training:
-        ds = tf.data.Dataset.sample_from_datasets(per_bucket_ds, weights=weights, seed=seed)
+        # 只随机交错有限桶；耗尽所有桶后才 repeat，不按规则上/下采样。
+        ds = tf.data.Dataset.sample_from_datasets(
+            per_bucket_ds, weights=weights, seed=seed, stop_on_empty_dataset=False,
+        )
         if repeat:
             ds = ds.repeat()
     else:

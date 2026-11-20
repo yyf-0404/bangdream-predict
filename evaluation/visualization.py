@@ -1,13 +1,23 @@
 # evaluation/visualization.py
 import os
 import numpy as np
-import tensorflow as tf
 import matplotlib.pyplot as plt
 from typing import List, Dict, Any
 from data.constants import inv_eventType, tierListOfServer, serverNames, bandNames
 # 直接复用训练用的序列加载函数
 from data.sequences import load_sequences_from_hdf5
 from data.slicing import _build_inputs_for_slices_dict
+
+
+def slice_points(length, t_min, max_slices):
+    points = np.arange(t_min, length, dtype=int)
+    if max_slices is not None and len(points) > max_slices:
+        points = points[np.linspace(0, len(points)-1, max_slices).round().astype(int)]
+    return points.tolist()
+
+
+def reconstruction_points(length, t_min):
+    return sorted({max(t_min, min(length-1, round(p * length))) for p in (.2, .5, .8)})
 
 
 def plot_sequence_slice_sums_batched_v2(
@@ -23,16 +33,14 @@ def plot_sequence_slice_sums_batched_v2(
     """
     对单个序列在不同切点 t0 下的累计和预测进行可视化。
     """
+    import tensorflow as tf
     y = seq["y"].astype(np.float32)
     T = y.shape[0]
     if T <= t_min + 1:
         return
 
     # 生成 t0 列表
-    t0_list = list(range(t_min, T))
-    if max_slices is not None and len(t0_list) > max_slices:
-        idx = np.linspace(0, len(t0_list) - 1, max_slices).round().astype(int)
-        t0_list = [t0_list[i] for i in idx]
+    t0_list = slice_points(T, t_min, max_slices)
 
     # 真实累计和
     per_t_sum = y.sum(axis=1)
@@ -40,18 +48,11 @@ def plot_sequence_slice_sums_batched_v2(
     full_true_sum = float(prefix[T])
 
     # 选取几个代表性切点用于显示重构段
-    desired_pcts = [0.2, 0.5, 0.8]
-    desired_t0s = []
-    for p in desired_pcts:
-        t0 = int(round(p * T))
-        t0 = max(t_min, min(T - 1, t0))
-        desired_t0s.append(t0)
-    desired_t0s = sorted(set(desired_t0s))
+    desired_t0s = reconstruction_points(T, t_min)
 
-    pred_steps_sum_by_t0 = {}
+    segments = {}
     hist_sum_curve = []
     hist_plus_pred_curve = []
-    full_true_curve = []
     pi_curve = []
 
     # 分块推理
@@ -75,42 +76,46 @@ def plot_sequence_slice_sums_batched_v2(
         step_sum = y_hat.sum(axis=2).astype(np.float64)
 
         for b, t0 in enumerate(x["hist_len"].tolist()):
-            if t0 in desired_t0s and t0 not in pred_steps_sum_by_t0:
-                pred_steps_sum_by_t0[t0] = (step_sum[b].copy(), int(k_list[b]))
+            if t0 in desired_t0s and t0 not in segments:
+                increments = step_sum[b, :int(k_list[b])]
+                segments[t0] = (t0, prefix[t0] + np.r_[0., np.cumsum(increments, dtype=np.float64)])
 
         hist_sum = prefix[x["hist_len"].astype(np.int32)].astype(np.float64)
         hist_sum_curve.extend(hist_sum.tolist())
         hist_plus_pred_curve.extend((hist_sum + pred_future_sum).tolist())
-        full_true_curve.extend([full_true_sum] * len(chunk))
+    plot_slice_forecasts(prefix, t0_list, hist_sum_curve, hist_plus_pred_curve, full_true_sum,
+                         segments, title_prefix, out_path, pi_curve=pi_curve)
 
-    # ---------- 绘图 ----------
+
+def plot_slice_forecasts(prefix, t0_list, hist_sum_curve, hist_plus_pred_curve, full_true_sum,
+                         segments, title_prefix, out_path, *, pi_curve=(), show_error=False):
+    """Plot rolling endpoints and forecast segments, each beginning at its actual anchor."""
+    T = len(prefix)-1
     has_pi = len(pi_curve) > 0
-    if has_pi:
+    if has_pi or show_error:
         fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 7), sharex=True,
                                        gridspec_kw={"height_ratios": [3, 1]})
     else:
         fig, ax1 = plt.subplots(1, 1, figsize=(10, 5))
 
     t_all = np.arange(0, T + 1, dtype=np.int32)
-    ax1.plot(t_all, prefix, label="true_prefix_sum")
-    ax1.plot(t0_list, hist_sum_curve, label="hist_sum (true prefix at t0)")
-    ax1.plot(t0_list, hist_plus_pred_curve, label="hist_sum + pred_future_sum")
-    ax1.plot(t0_list, full_true_curve, label="full_true_sum")
+    ax1.plot(t_all, prefix, label="实际累计分数" if show_error else "true_prefix_sum")
+    ax1.plot(t0_list, hist_sum_curve, label="起报时最新档线" if show_error else "hist_sum (true prefix at t0)")
+    ax1.plot(t0_list, hist_plus_pred_curve, label="逐次预测的结算分数" if show_error else "hist_sum + pred_future_sum")
+    ax1.plot(t0_list, np.full(len(t0_list), full_true_sum), label="真实结算分数" if show_error else "full_true_sum")
 
-    for t0 in desired_t0s:
-        if t0 not in pred_steps_sum_by_t0:
-            continue
-        step_sum, k = pred_steps_sum_by_t0[t0]
-        step_sum = step_sum[:k]
-        pred_prefix = prefix[t0] + np.cumsum(step_sum, dtype=np.float64)
-        seg_prefix = np.concatenate([np.array([prefix[t0]], dtype=np.float64), pred_prefix], axis=0)
-        t_seg = np.arange(t0, t0 + k + 1, dtype=np.int32)
+    for t0, (anchor, seg_prefix) in segments.items():
+        t_seg = np.arange(anchor, anchor + len(seg_prefix), dtype=np.int32)
         pct = int(round(100 * t0 / max(1, T)))
-        ax1.plot(t_seg, seg_prefix, linestyle="--", label=f"pred-prefix seg @t0={t0} (~{pct}%)")
+        label = f"进度 {pct}% 时预测的走势" if show_error else f"pred-prefix seg @t0={t0} (~{pct}%)"
+        ax1.plot(t_seg, seg_prefix, linestyle="--", label=label)
 
-    ax1.set_ylabel("cumulative sum / total sum")
-    ax1.legend()
-    ax1.set_title(f"{title_prefix}: slice-sum + recon prefix (T={T})")
+    ax1.set_ylabel("累计分数（分）" if show_error else "cumulative sum / total sum")
+    if show_error:
+        ax1.legend(ncol=2, fontsize=9)
+    else:
+        ax1.legend()
+    ax1.set_title(title_prefix if show_error else f"{title_prefix}: slice-sum + recon prefix (T={T})")
 
     if has_pi:
         pi_arr = np.array(pi_curve, dtype=np.float64)
@@ -121,22 +126,29 @@ def plot_sequence_slice_sums_batched_v2(
         ax2.set_xlabel("slice point t0")
         ax2.set_ylim(0.0, 1.0)
         t0_to_idx = {int(t0): i for i, t0 in enumerate(t0_list)}
-        for t0 in desired_t0s:
-            if t0 not in t0_to_idx:
-                continue
+        for t0 in segments:
             i = t0_to_idx[t0]
             ex = int(np.argmax(pi_arr[i]))
             ax2.axvline(t0, linestyle=":", alpha=0.25)
             ax2.text(t0, 1.02, f"e{ex}", rotation=90, va="bottom", ha="center", fontsize=8)
         ax2.legend(ncol=min(n_experts, 4), fontsize=8, loc="upper right")
+    elif show_error:
+        error = np.asarray(hist_plus_pred_curve) - full_true_sum
+        if full_true_sum > 0:
+            error = 100. * error / full_true_sum
+        ax2.axhline(0, lw=1, color='0.35')
+        ax2.plot(t0_list, error, color='tab:green')
+        ax2.set_ylabel('结算偏差（%）' if full_true_sum > 0 else '结算偏差（分）')
+        ax2.set_xlabel('距开场的半小时数（偏差为正表示高估，为负表示低估）')
+        ax2.grid(alpha=.2)
     else:
         ax1.set_xlabel("slice point t0")
 
     fig.tight_layout()
     if out_path is not None:
-        os.makedirs(os.path.dirname(out_path), exist_ok=True)
-        plt.savefig(out_path, dpi=150)
-        plt.close()
+        os.makedirs(os.path.dirname(out_path) or '.', exist_ok=True)
+        fig.savefig(out_path, dpi=150)
+        plt.close(fig)
     else:
         plt.show()
 

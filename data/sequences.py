@@ -1,19 +1,40 @@
 # data/sequences.py
 import h5py
 import numpy as np
+import warnings
 from typing import List, Dict, Any, Optional
+from .rank_order import CUTOFF_SEQUENCE_VERSION
+from .time_features import TIME_FEATURE_VERSION
+
+
+def get_cutoff_sequence_version(h5_file):
+    """Warn rather than silently training/evaluating on an older grid format."""
+    meta = h5_file['meta'].attrs if 'meta' in h5_file else {}
+    version = meta.get('cutoff_sequence_version', 'legacy')
+    if isinstance(version, bytes):
+        version = version.decode('utf-8')
+    if version != CUTOFF_SEQUENCE_VERSION:
+        warnings.warn(
+            f"{h5_file.filename}: cutoff 序列版本为 {version}，尚未应用当前跨档保序；"
+            "请依次运行 generate_raw_h5.py 和 preprocess.py 重建训练数据。",
+            RuntimeWarning, stacklevel=2,
+        )
+    if meta.get('time_feature_version') != TIME_FEATURE_VERSION:
+        warnings.warn("HDF5 未标记显式服务器时区，请重建训练数据。", RuntimeWarning, stacklevel=2)
+    return version
 
 def load_sequences_from_hdf5(filename: str, split: Optional[str] = None) -> List[Dict[str, Any]]:
     sequences = []
     with h5py.File(filename, "r") as f:
+        get_cutoff_sequence_version(f)
         for key in f.keys():
             if not key.startswith("seq_"):
                 continue
             g = f[key]
+            split_attr = g.attrs.get("split", None)
+            if isinstance(split_attr, bytes):
+                split_attr = split_attr.decode("utf-8")
             if split is not None:
-                split_attr = g.attrs.get("split", None)
-                if isinstance(split_attr, bytes):
-                    split_attr = split_attr.decode("utf-8")
                 if split_attr != split:
                     continue
 
@@ -27,6 +48,7 @@ def load_sequences_from_hdf5(filename: str, split: Optional[str] = None) -> List
                 "exo": exo,
                 "context_cat": context_cat,
                 "context_num": context_num,
+                "split": split_attr,
             }
             if "tier" in g.attrs:
                 seq["tier"] = int(g.attrs["tier"])

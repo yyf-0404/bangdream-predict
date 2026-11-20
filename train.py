@@ -1,27 +1,43 @@
-# train.py
-import os, argparse
-from datetime import datetime
-import tensorflow as tf
-import keras
-from config import Config
-from data.dataset import load_preprocessed, make_batch_dataset_from_buckets
-from model.baseline import SimpleMLPBaseline
-from model.seasonal_mlp import SeasonalMLP
-from model.cdf_shape import CDFShapeMLP
-from model.moe_shape import MoeShapeModel
-from utils.tf_ops import set_global_seed
-from utils.plotting import plot_and_save_training_curves
-from evaluation.visualization import visualize_val_sequences_after_training
+"""Train the released conditional curve or the legacy single-tier MoE."""
+import argparse
+import os
 import shutil
+from datetime import datetime
+
+from config import CURVE_DATA, Config
+
+
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--epochs", type=int, default=None)
-    parser.add_argument("--batch_size", type=int, default=None)
-    parser.add_argument("--lr", type=float, default=None)
-    parser.add_argument("--hidden", type=int, default=None)
-    parser.add_argument("--model_name", type=str, default="moe",
-                    help="模型名称，用于生成固定保存路径")
+    parser.add_argument('--model-type', '--model_type', choices=('conditional-curve', 'moe'), default='conditional-curve')
+    parser.add_argument('--data', help='Joint HDF5 file for conditional-curve')
+    parser.add_argument('--out-dir', '--out_dir', help='Output directory for conditional-curve')
+    parser.add_argument('--fit-scope', choices=('train','all'), help='Conditional curve event split, default train')
+    parser.add_argument('--epochs', type=int)
+    parser.add_argument('--batch-size', '--batch_size', type=int)
+    parser.add_argument('--lr', type=float)
+    parser.add_argument('--hidden', type=int)
+    parser.add_argument('--model_name')
     args = parser.parse_args()
+
+    if args.model_type == 'conditional-curve':
+        if any(getattr(args, key) is not None for key in ('epochs','batch_size','lr','hidden','model_name')):
+            parser.error('Optimizer options require --model-type moe')
+        from training.conditional_curve import train_conditional_curve
+        return train_conditional_curve(args.data or CURVE_DATA, args.out_dir or 'outputs/conditional-curve',
+                                       fit_scope=args.fit_scope or 'train')
+    if args.data or args.out_dir or args.fit_scope:
+        parser.error('--data, --out-dir and --fit-scope require --model-type conditional-curve')
+    train_moe(args)
+
+
+def train_moe(args):
+    import keras
+    from data.dataset import load_preprocessed, make_batch_dataset_from_buckets
+    from model.moe_shape import MoeShapeModel
+    from utils.tf_ops import set_global_seed
+    from utils.plotting import plot_and_save_training_curves
+    from evaluation.visualization import visualize_val_sequences_after_training
 
     config = Config()
     if args.epochs is not None: config.epochs = args.epochs
@@ -91,7 +107,7 @@ def main():
 
     # 保存
     plot_and_save_training_curves(history, out_dir)
-    model_name = args.model_name if args.model_name is not None else "model"
+    model_name = args.model_name if args.model_name is not None else "moe"
     model.save(os.path.join(out_dir, f"{model_name}.keras"))
     print(f"Model and plots saved to {out_dir}")
     fixed_model_dir = "saved_models"

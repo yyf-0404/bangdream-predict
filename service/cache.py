@@ -4,11 +4,17 @@ import json
 import threading
 from typing import Dict, List, Optional
 from utils.http_utils import save_json
+from data.rank_order import CUTOFF_SEQUENCE_VERSION
+from data.time_features import TIME_FEATURE_VERSION
 
 class PredictionCache:
-    def __init__(self, cache_dir: str = "service/cache_data"):
+    def __init__(self, cache_dir: Optional[str] = None):
         self._lock = threading.RLock()
-        self.cache_dir = cache_dir
+        # Preserve legacy caches on disk, but never reuse uncorrected PCHIP
+        # predictions after changing cumulative-grid semantics.
+        self.cache_dir = cache_dir if cache_dir is not None else os.path.join(
+            "service/cache_data", TIME_FEATURE_VERSION, CUTOFF_SEQUENCE_VERSION,
+        )
         os.makedirs(self.cache_dir, exist_ok=True)
 
         # 内存缓存（用于快速访问）

@@ -4,42 +4,16 @@ import h5py
 from typing import List, Dict, Any
 from .sequences import load_sequences_from_hdf5, compute_y_normalization_params, compute_contextnum_params
 from .slicing import choose_t0_lists, build_query
+from .sample_weights import (
+    SAMPLE_WEIGHT_VERSION, build_sample_weight_plan,
+    compute_sample_weight, compute_tier_weight,
+)
 
 def bucket_index(L: int, boundaries: List[int]) -> int:
     return int(np.searchsorted(np.asarray(boundaries, dtype=np.int32), L, side="right"))
 
 def round_up(x: int, multiple: int = 32) -> int:
     return int(((x + multiple - 1) // multiple) * multiple)
-
-def compute_sample_weight(K: int, T: int, mode: str = "sqrt_floor", floor: float = 0.2) -> np.float32:
-    r = float(K) / float(T)
-    if mode == "none":
-        w = 1.0
-    elif mode == "sqrt":
-        w = np.sqrt(r)
-    elif mode == "linear":
-        w = r
-    elif mode == "old":
-        w = np.sqrt(r) * r
-    elif mode == "sqrt_floor":
-        w = max(np.sqrt(r), float(floor))
-    elif mode == "linear_floor":
-        w = max(r, float(floor))
-    else:
-        raise ValueError(f"Unknown weight mode: {mode}")
-    return np.float32(w)
-
-def compute_tier_weight(tier_idx: int,
-                        center: int = 9,
-                        alpha: float = 0.15,
-                        floor: float = 0.3) -> float:
-    """
-    以 center 为中心，指数衰减的档位权重。
-    alpha 越大，衰减越快；floor 为最低权重。
-    """
-    d = abs(int(tier_idx) - int(center))
-    w = max(float(np.exp(-alpha * d)), float(floor))
-    return w
 
 def preprocess_split_to_groups(
     sequences: List[Dict[str, Any]],
@@ -54,8 +28,16 @@ def preprocess_split_to_groups(
     weight_mode: str = "sqrt_floor",
     weight_floor: float = 0.2,
     tier_center=9, tier_alpha=0.15, tier_floor=0.3,   # 新增档位加权参数
+    tier_1500_weight: float = 1.0,
+    balance_rules: bool = False,
 ):
     assert length_mode == "hist", "仅支持按 hist 长度分桶"
+    weight_plan = build_sample_weight_plan(
+        sequences, t0_lists, balance_rules=balance_rules,
+        weight_mode=weight_mode, weight_floor=weight_floor,
+        tier_center=tier_center, tier_alpha=tier_alpha, tier_floor=tier_floor,
+        tier_1500_weight=tier_1500_weight,
+    )
 
     nbuckets = len(bucket_boundaries) + 1
     counts = np.zeros(nbuckets, dtype=np.int64)
@@ -119,12 +101,15 @@ def preprocess_split_to_groups(
             "future_exo_hol":  np.zeros((n, Lf), np.int32),
             "y_future": np.zeros((n, Lf, x_dim), np.float32),
             "weight": np.zeros((n, 1), np.float32),
+            "rule_version": np.zeros((n,), np.int8),
+            "event_id": np.zeros((n,), np.int32),
+            "tier": np.zeros((n,), np.int32),
         }
         buckets.append(bk)
 
     # ---------- Pass 2: 填充 ----------
     write_ptr = np.zeros(nbuckets, dtype=np.int64)
-    for seq, t0_list in zip(sequences, t0_lists):
+    for seq_index, (seq, t0_list) in enumerate(zip(sequences, t0_lists)):
         y = seq["y"].astype(np.float32)
         exo = seq["exo"].astype(np.int32)
         ctx_cat = (seq["context_cat"].astype(np.int32) + 1)  # 偏移，0 留给 padding
@@ -148,12 +133,12 @@ def preprocess_split_to_groups(
 
             base_w = compute_sample_weight(tk, T, mode=weight_mode, floor=weight_floor)
 
-            # 提取当前样本的 tier 索引（context_cat 已整体 +1，所以需减1恢复0-based）
-            # ctx_cat 变量在该循环中已定义：ctx_cat = (seq["context_cat"].astype(np.int32) + 1)
-            tier_idx = int(ctx_cat[2]) - 1   # 索引2为tier，0-based
-            tier_w = compute_tier_weight(tier_idx, center=tier_center, alpha=tier_alpha, floor=tier_floor)
-
-            bk["weight"][i, 0] = base_w * tier_w
+            rule = weight_plan.rules[seq_index]
+            tier_w = weight_plan.tier_weights[seq_index]
+            bk["weight"][i, 0] = base_w * tier_w * weight_plan.factors[rule]
+            bk["rule_version"][i] = rule
+            bk["event_id"][i] = int(seq["context_cat"][4])
+            bk["tier"][i] = weight_plan.tiers[seq_index]
             # 上下文
             bk["context_cat"][i, :] = ctx_cat
             bk["context_num"][i] = ctx_num
@@ -183,6 +168,19 @@ def preprocess_split_to_groups(
     out_group.attrs["length_mode"] = "hist_LhLf"
     out_group.attrs["weight_mode"] = str(weight_mode)
     out_group.attrs["weight_floor"] = float(weight_floor)
+    out_group.attrs["sample_weight_version"] = SAMPLE_WEIGHT_VERSION
+    out_group.attrs["rule_balance_requested"] = bool(balance_rules)
+    out_group.attrs["rule_balance_applied"] = weight_plan.balanced
+    out_group.attrs["rule_sample_counts"] = weight_plan.counts
+    out_group.attrs["rule_base_weight_sums"] = weight_plan.base_sums
+    out_group.attrs["rule_weight_factors"] = weight_plan.factors
+    out_group.attrs["tier_1500_weight"] = float(tier_1500_weight)
+    final_sums = np.zeros(2, dtype=np.float64)
+    for bk in buckets:
+        if bk is not None:
+            for rule in (0, 1):
+                final_sums[rule] += bk['weight'][bk['rule_version'] == rule].sum(dtype=np.float64)
+    out_group.attrs["rule_final_weight_sums"] = final_sums
     out_group.create_dataset("bucket_boundaries", data=np.asarray(bucket_boundaries, np.int32))
     out_group.create_dataset("bucket_counts", data=counts.astype(np.int64))
     out_group.create_dataset("bucket_Lh", data=np.asarray(Lh_list, np.int32))

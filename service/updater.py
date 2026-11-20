@@ -45,6 +45,13 @@ class DataUpdater:
     def set_predictor(self, predictor: Predictor):
         self.predictor = predictor
 
+    def get_predictions(self, event_id, server, tier):
+        latest = self.ensure_latest_slice(event_id, server, tier)
+        history = self.cache.get_history(event_id, server, tier)
+        if history is None:
+            return None
+        return dict(event_id=event_id, server=server, tier=tier, history=history, latest_slice=latest)
+
     # -----------------------------------------------------------------
     # 按需生成序列（不保存到内存）
     # -----------------------------------------------------------------
@@ -166,6 +173,9 @@ class DataUpdater:
                     tier_list=[tier],
                     force=True,
                 )
+                # The supplied event grid predates this download. Regenerate
+                # it (including peer ranks) before using a newer slice limit.
+                seq = None
                 latest_time = get_latest_cutoff_time(event_id, server, tier)
                 if latest_time is None:
                     return None

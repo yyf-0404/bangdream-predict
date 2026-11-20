@@ -1,159 +1,50 @@
 # bangdream-predict
 
-BanG Dream! 活动档线预测项目。项目从 Bestdori 获取活动 cutoff 数据，将原始 JSON 转换为 HDF5 序列，训练 TensorFlow/Keras 模型，并通过 FastAPI 提供在线预测服务。
+BanG Dream! 国服活动档线预测。最终模型为 **原条件曲线 `conditional-curve-v1`**。开场满 24 小时、有足够的实测档线后，模型从最近一次共同观测推算各档每半小时的累计分数，直到结算。发布权重随仓库提供。[最终权重](saved_models/conditional-curve.npz) · [模型与验证结果](docs/conditional-curve.md)
 
-## 功能概览
+## 启动服务
 
-- 下载并缓存 Bestdori 活动、角色和 cutoff 数据
-- 将活动档线转换为 30 分钟粒度的时间序列
-- 生成训练用 HDF5 数据集和按历史长度分桶的预处理数据
-- 训练多种 Keras 模型，当前默认使用 MoE shape 模型
-- 保存训练曲线、验证集切片可视化和 `.keras` 模型
-- 通过 FastAPI 返回指定活动、服务器、档位的历史预测和最新预测曲线
-
-## 项目结构
-
-```text
-.
-├── config.py              # 全局配置：数据路径、训练参数、模型参数
-├── download_data.py       # 下载 Bestdori 原始 cutoff 数据
-├── generate_raw_h5.py     # 原始 JSON -> datasets/data.hdf5
-├── preprocess.py          # datasets/data.hdf5 -> datasets/preprocessed.h5
-├── train.py               # 模型训练入口
-├── visualize.py           # 加载模型并生成验证集可视化
-├── serve.py               # FastAPI 服务启动入口
-├── data/                  # 数据下载、序列构造、切片、预处理、tf.data
-├── model/                 # Keras 模型和自定义层
-├── service/               # 在线预测、后台更新、本地缓存
-├── evaluation/            # 可视化评估逻辑
-├── utils/                 # HTTP、绘图、TensorFlow 工具
-└── saved_models/          # 默认模型目录
-```
-
-## 环境准备
-
-建议在虚拟环境中安装依赖：
+在项目根目录执行以下命令。
 
 ```bash
-python -m venv .venv
-source .venv/bin/activate
 pip install -r requirements.txt
-```
-
-依赖版本见 [requirements.txt](requirements.txt)。如果 TensorFlow 安装失败，请使用与 `tensorflow>=2.20.0,<2.21.0` 兼容的 Python 版本。
-
-## 数据目录
-
-原始数据目录固定由 [config.py](config.py) 中的 `Config.raw_dir` 控制，默认是：
-
-```text
-datasets/raw
-```
-
-项目不再支持通过命令行或环境变量自定义 raw 数据目录。如需修改，请改 `config.py`。
-
-`.gitignore` 默认忽略以下运行产物：
-
-- `datasets/`
-- `outputs/`
-- `service/cache_data/`
-- `__pycache__/`
-
-## 数据处理流程
-
-1. 下载 cutoff 原始数据：
-
-```bash
-python download_data.py --start_event 226
-```
-
-2. 生成原始 HDF5 序列：
-
-```bash
-python generate_raw_h5.py
-```
-
-默认输出 `datasets/data.hdf5`。
-
-3. 生成训练用预处理数据：
-
-```bash
-python preprocess.py
-```
-
-默认输出 `datasets/preprocessed.h5`。
-
-## 训练
-
-默认训练 MoE shape 模型：
-
-```bash
-python train.py
-```
-
-可覆盖常用训练参数：
-
-```bash
-python train.py --epochs 20 --batch_size 512 --lr 0.0001 --hidden 128 --model_name moe
-```
-
-训练输出：
-
-- `outputs/<run_id>/`：训练曲线、配置快照、验证集可视化
-- `saved_models/<model_name>.keras`：服务默认加载的模型文件
-
-当前服务默认模型路径是 `saved_models/moe.keras`，也可以通过 `MODEL_PATH` 环境变量覆盖：
-
-```bash
-MODEL_PATH=saved_models/moe.keras python serve.py
-```
-
-## 在线服务
-
-启动服务：
-
-```bash
 python serve.py
 ```
 
-默认监听 `0.0.0.0:8000`。
-
-健康检查：
+服务监听 `0.0.0.0:8000`。查询国服 328 期 1500 档的示例如下。
 
 ```bash
-curl http://localhost:8000/health
+curl http://127.0.0.1:8000/health
+curl 'http://127.0.0.1:8000/predictions/328?server=3&tier=1500'
 ```
 
-查询预测：
+`/health` 返回加载的模型版本和权重 SHA-256。预测响应中的 `history` 是每次起报时预测的结算分。活动进行中，`latest_slice.prefix_curve` 给出从最新锚点到结算的逐半小时预测。活动结束后 `latest_slice` 为 `null`。历史只使用各次起报时已发布的分数。服务按需下载数据，并每半小时刷新活跃活动。模型权重、算法缓存版本和原始观测共同决定可复用的预测缓存。
+
+## 数据、复现与验证图
+
+下面两步下载国服档线，按固定活动清单生成 `datasets/joint_v2_through_328.h5`。已有冻结快照可直接用于回放。数据源后续补录可能改变重建结果。
 
 ```bash
-curl "http://localhost:8000/predictions/306?server=3&tier=1000"
+python download_data.py --start_event 226
+python generate_joint_h5.py
 ```
 
-返回字段包含：
-
-- `history`：已缓存的历史切点预测
-- `latest_slice`：当前切点的未来曲线预测；活动未开始、已结束或历史长度不足 `t_min` 时可能为 `null`
-
-## 可视化
-
-对已训练模型生成验证集切片可视化：
+在训练服务器上运行以下命令，可用训练集的 79 场活动拟合原条件曲线。默认输出 `outputs/conditional-curve/conditional-curve.npz`。默认服务始终加载 `saved_models/conditional-curve.npz`。
 
 ```bash
-python visualize.py --model_path saved_models/moe.keras
+python train.py --model-type conditional-curve
 ```
 
-默认输出到 `outputs/viz_test/val_slice_viz/`。
+以下命令用发布权重回放验证集，生成 `outputs/viz_test/index.html`。每张图含实际走势、各次预测的结算分、代表起报时刻的整段预测及结算偏差。
 
-## 注意事项
+```bash
+python visualize.py
+```
 
-- 当前主要面向 Bestdori CN 服务器，默认 server 为 `3`。
-- 时间步长固定为 30 分钟。
-- `t_min=48`，即活动开始后约 24 小时才会进行预测。
-- CN 新活动规则中的 1500 档会被服务拉取；现有模型预测该档时按 missing tier embedding 0 处理，以覆盖新旧两种活动规则。
-- 在线服务后台每 30 分钟刷新一次活跃活动 cutoff，并按档位更新预测缓存。
-- Bestdori 数据版权和使用条件不属于本仓库许可证覆盖范围。
+国服 322–328 七场历史验证中，从满 24 小时开始逐半小时起报，500 档结算误差为 **3.97%**，1500 档为 **8.40%**。对应整段曲线误差为 **1.55%** 和 **2.12%**。[活动划分](data/splits/cn_type_balanced_through_328_v3.json) · [结算标签](data/splits/cn_verified_finals_through_328.json) · [评分口径](docs/conditional-curve.md)
 
-## License
+兼容原逐档 MoE 的入口为 `python train.py --model-type moe`，已有调用可通过 `MODEL_PATH=saved_models/moe.keras python serve.py` 显式加载旧权重。
 
-This project is licensed under the MIT License. See [LICENSE](LICENSE) for details.
+## 许可证
+
+[MIT License](LICENSE)。外部数据的版权与使用条件归其提供方。

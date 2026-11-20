@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>条件曲线 · 验证集误差</title>
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: "Noto Sans CJK SC", "Microsoft YaHei", system-ui, sans-serif; color: #182f37; background: #f5f7f7; }
+  main { max-width: 1080px; margin: auto; padding: clamp(16px, 4vw, 44px); }
+  h1 { font-size: clamp(1.65rem, 4vw, 2.45rem); margin: 0 0 6px; }
+  h2 { font-size: 1.2rem; margin: 0; }
+  p { color: #455b63; line-height: 1.6; margin: 4px 0 10px; }
+  header, section { margin-bottom: 24px; }
+  a { color: #075e64; }
+  .metrics, .controls, .details { display: flex; flex-wrap: wrap; gap: 10px 28px; align-items: baseline; }
+  .metrics { margin: 18px 0; padding-block: 12px; border-block: 1px solid #cad4d5; }
+  .metrics span, .details { font-variant-numeric: tabular-nums; }
+  strong { margin-inline-start: 5px; }
+  select { margin-inline-start: 6px; padding: 5px 9px; font: inherit; max-width: 100%; }
+  .details { color: #43575d; font-size: .94rem; margin: 12px 0 6px; }
+  figure { margin: 0; }
+  img { max-width: 100%; height: auto; display: block; background: white; }
+  #picture { width: 100%; }
+  #overview img { width: min(100%, 820px); margin-top: 10px; }
+  figcaption { font-size: .92rem; color: #43575d; margin-top: 5px; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>条件曲线 · 验证集误差</h1>
+    <p id="sampling"></p>
+    <div class="metrics" id="metrics"></div>
+    <a href="#overview">查看全部活动的误差总览</a>
+  </header>
+  <section aria-label="按活动和档位查看">
+    <div class="controls">
+      <label>活动<select id="event"></select></label>
+      <label>档位<select id="rank"></select></label>
+      <a id="original" href="#">打开原尺寸图</a>
+    </div>
+    <div class="details" id="details" aria-live="polite"></div>
+    <figure>
+      <img id="picture" alt="所选活动和档位的滚动结算预测与偏差" width="1500" height="1050">
+      <figcaption>上图将每次预测的结算分数与真实结算线对照，虚线是代表性切点预测的后续走势。下图的正值表示高估，负值表示低估。</figcaption>
+    </figure>
+  </section>
+  <section id="overview">
+    <h2>全部活动 · 重点档误差</h2>
+    <p>先对每档的有效起报时刻取平均，再对档位和活动等权汇总。灰格表示该档位缺少可评分记录。</p>
+    <a href="overview.png"><img src="overview.png" alt="各验证活动在 500、1000、1500 和 2000 档的滚动结算误差"></a>
+  </section>
+</main>
+<script type="application/json" id="data">__VALIDATION_REPORT__</script>
+<script>
+(() => {
+  const report = JSON.parse(document.getElementById('data').textContent);
+  const byId = new Map(report.events.map(e => [String(e.event), e]));
+  const get = id => document.getElementById(id);
+  const eventSelect = get('event'), rankSelect = get('rank');
+  const percentage = n => n == null ? '暂无' : n.toFixed(2) + '%';
+  const number = new Intl.NumberFormat('zh-CN', { maximumFractionDigits: 0 });
+  const sampleCount = report.events.reduce((n, e) => n + e.scheduled, 0);
+  const validCount = report.events.reduce((n, e) => n + e.covered, 0);
+  const allCuts = report.events.every(e => e.scheduled === e.length - report.t_min);
+  get('sampling').textContent = '自开场满 ' + report.t_min / 2 + ' 小时起' +
+    (allCuts ? '逐半小时回放' : '按脚本抽样回放') + '。' + report.events.length + ' 场活动共 ' +
+    number.format(sampleCount) + ' 个起报时刻，其中 ' + number.format(validCount) + ' 个有足够历史档线。';
+  for (const [key, text] of [['all', '全部验证'], ['new', '新规则'], ['old', '旧规则']]) {
+    const span = document.createElement('span');
+    const strong = document.createElement('strong');
+    strong.textContent = percentage(report.focus_mape[key]);
+    span.append(text + ' · 重点档结算 MAPE', strong);
+    get('metrics').append(span);
+  }
+  for (const [key, name] of [['new', '新规则'], ['old', '旧规则']]) {
+    const group = document.createElement('optgroup');
+    group.label = name;
+    for (const e of report.events.filter(e => e.rule === key).sort((a,b) => b.event-a.event)) {
+      group.append(new Option(e.event + ' 期', String(e.event)));
+    }
+    if (group.children.length) eventSelect.append(group);
+  }
+  const query = new URLSearchParams(location.hash.slice(1));
+  if (byId.has(query.get('event'))) eventSelect.value = query.get('event');
+  function draw() {
+    const e = byId.get(eventSelect.value);
+    const r = e.ranks.find(r => String(r.rank) === rankSelect.value);
+    const picture = get('picture'), link = get('original');
+    if (!r) {
+      picture.hidden = true;
+      link.hidden = true;
+      get('details').textContent = '该活动所选档位没有可发布的起报记录。';
+      return;
+    }
+    picture.hidden = false;
+    link.hidden = false;
+    picture.src = r.image;
+    picture.alt = e.event + ' 期 ' + r.rank + ' 档的条件曲线验证图';
+    link.href = r.image;
+    get('details').textContent = '真实结算 ' + number.format(r.final) + ' 分　·　该档结算 MAPE ' +
+      percentage(r.mape) + '　·　有效起报 ' + number.format(r.points) + ' / ' + number.format(e.scheduled);
+  }
+  function selectRank(wanted) {
+    const e = byId.get(eventSelect.value);
+    const ranks = e.ranks.filter(r => r.image);
+    rankSelect.replaceChildren(...ranks.map(r => new Option(r.rank + ' 档', String(r.rank))));
+    if (ranks.some(r => String(r.rank) === wanted)) rankSelect.value = wanted;
+    else if (ranks.some(r => r.rank === 1000)) rankSelect.value = '1000';
+    draw();
+  }
+  function remember() {
+    history.replaceState(null, '', '#event=' + eventSelect.value + '&rank=' + rankSelect.value);
+  }
+  eventSelect.addEventListener('change', () => { selectRank(rankSelect.value); remember(); });
+  rankSelect.addEventListener('change', () => { draw(); remember(); });
+  selectRank(query.get('rank') || '1000');
+})();
+</script>
+</body>
+</html>

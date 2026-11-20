@@ -1,9 +1,18 @@
 # data/constants.py
 import os
-import holidays
 
-# 中国节假日
-cn_holidays = holidays.CountryHoliday('CN')
+
+_cn_holidays = None
+
+
+def get_cn_holidays():
+    """按需加载节假日库，避免纯数据下载依赖训练特征包。"""
+    global _cn_holidays
+    if _cn_holidays is None:
+        import holidays
+
+        _cn_holidays = holidays.CountryHoliday('CN')
+    return _cn_holidays
 
 # 旧活动 tier 列表（只用了 server=3）
 oldEventTierListOfServer = {
@@ -72,9 +81,9 @@ bandNames = {
     0: "Mixed",
     1: "ppp",
     2: "ag",
-    3: "pp",
-    4: "rose",
-    5: "hhw",
+    3: "hhw",
+    4: "pp",
+    5: "rose",
     6: "ras",
     7: "monica",
     8: "go"
